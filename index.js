@@ -140,6 +140,7 @@ async function initIngress() {
         logger.info(`Updated: ${apiObj.metadata.name}`);
         await deletePodoIngress(apiObj.metadata.name)
         await createIngress(createPodoIngressFrom(apiObj))
+        await scaleDeployment(ingress.body.metadata.labels["podo.key"], 0)
     });
     informer.on('delete', async (apiObj) => {
         if (apiObj.spec.ingressClassName != podoIngressClassName)
