@@ -1,0 +1,13 @@
+{
+  "name": "pod-on-demand-operator",
+  "version": "0.0.1",
+  "description": "starts pods on http request and stops them to save ressources",
+  "main": "index.js",
+  "license": "Apache-2.0",
+  "dependencies": {
+    "@kubernetes/client-node": "^0.18.1",
+    "crypto": "^1.0.1",
+    "pino": "^8.14.1",
+    "pino-pretty": "^10.0.0"
+  }
+}
