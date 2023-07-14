@@ -27,7 +27,7 @@ kc.loadFromDefault();
 const k8sApi = kc.makeApiClient(k8s.CoreV1Api);
 const k8sDeployApi = kc.makeApiClient(k8s.AppsV1Api);
 const k8snetApi = kc.makeApiClient(k8s.NetworkingV1Api);
-
+var informer = undefined;
 
 const lastUseMap = {}
 
@@ -123,52 +123,43 @@ async function initIngress() {
     logger.info("init ingress watcher")
     await deletePodoIngresses()
 
-    const watch = new k8s.Watch(kc);
-    watch.watch(`/apis/networking.k8s.io/v1/namespaces/${namespace}/ingresses`,
-        // optional query parameters can go here.
-        {
-            allowWatchBookmarks: false,
-            labelSelector: "podo.managed!=true"
-        },
-        // callback is called for each received object.)
-        async (type, apiObj, watchObj) => {
-            if (apiObj.spec.ingressClassName != podoIngressClassName)
-                return
-            // logger.info(apiObj)
-            if (type === 'ADDED') {
-                // tslint:disable-next-line:no-console
-                logger.info('new object:');
-                ingress = await createIngress(createPodoIngressFrom(apiObj))
-                await scaleDeployment(ingress.body.metadata.labels["podo.key"], 0)
-            } else if (type === 'MODIFIED') {
-                // tslint:disable-next-line:no-console
-                logger.info('changed object:');
-                await deletePodoIngress(apiObj.metadata.name)
-                await createIngress(createPodoIngressFrom(apiObj))
-            } else if (type === 'DELETED') {
-                // tslint:disable-next-line:no-console
-                logger.info('deleted object:');
-                await deletePodoIngress(apiObj.metadata.name)
-            } else if (type === 'BOOKMARK') {
-                // tslint:disable-next-line:no-console
-                logger.info(`bookmark: ${watchObj.metadata.resourceVersion}`);
-            } else {
-                // tslint:disable-next-line:no-console
-                logger.info('unknown type: ' + type);
-            }
-            // tslint:disable-next-line:no-console
-            // logger.info(apiObj);
-        },
-        // done callback is called if the watch terminates normally
-        (err) => {
-            // tslint:disable-next-line:no-console
-            logger.error("k8s watch was terminated ", + err);
+    const selector = "podo.managed!=true"
+    const listFn = () => k8snetApi.listNamespacedIngress(namespace, undefined, undefined, undefined, undefined, selector)
+    informer = k8s.makeInformer(kc, `/apis/networking.k8s.io/v1/namespaces/${namespace}/ingresses`, listFn, selector)
+
+    informer.on('add', async (apiObj) => {
+        if (apiObj.spec.ingressClassName != podoIngressClassName)
+            return
+        logger.info(`Added: ${apiObj.metadata.name}`);
+        ingress = await createIngress(createPodoIngressFrom(apiObj))
+        await scaleDeployment(ingress.body.metadata.labels["podo.key"], 0)
+    });
+    informer.on('update', async (apiObj) => {
+        if (apiObj.spec.ingressClassName != podoIngressClassName)
+            return
+        logger.info(`Updated: ${apiObj.metadata.name}`);
+        await deletePodoIngress(apiObj.metadata.name)
+        await createIngress(createPodoIngressFrom(apiObj))
+    });
+    informer.on('delete', async (apiObj) => {
+        if (apiObj.spec.ingressClassName != podoIngressClassName)
+            return
+        logger.info(`Deleted: ${apiObj.metadata.name}`);
+        await deletePodoIngress(apiObj.metadata.name)
+    });
+    informer.on("connect", () => {
+        logger.info("k8s informer was connected...");
+    });
+    informer.on('error', (err) => {
+        logger.error("k8s informer was terminated...", + err);
+        // Restart informer after 5sec
+        setTimeout(() => {
+            logger.info("restarting informer", + err);
             initIngress()
-        })
-    // .then((req) => {
-    //     // watch returns a request object which you can use to abort the watch.
-    //     setTimeout(() => { req.abort(); }, 10 * 1000);
-    // });
+        }, 5000);
+    });
+    informer.start();
+
     logger.info("done with init")
 }
 
